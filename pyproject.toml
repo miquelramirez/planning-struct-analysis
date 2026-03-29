@@ -1,0 +1,7 @@
+[project]
+name = "planning-struct-analysis"
+version = "0.1.0"
+description = "Analysis of structures in planning problems"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
