@@ -11,4 +11,4 @@ dependencies = [
 ]
 
 [project.scripts]
-planing-struct-analysis = "planning_struct_analysis:main.main"
+psa_tool = "planning_struct_analysis:main.main"
