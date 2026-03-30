@@ -11,15 +11,18 @@ from typing import Self
 import numpy as np
 
 @dataclass
-class LinearInequality(object):
+class AffineExpression(object):
+    """
+    An affine expression
+    """
     a: np.ndarray
     b: float
 
     def __add__(self, other: Self) -> Self:
-        return LinearInequality(self.a + other.a, self.b + other.b)
+        return AffineExpression(self.a + other.a, self.b + other.b)
 
     def __sub__(self, other: Self) -> Self:
-        return LinearInequality(self.a - other.a, self.b - other.b)
+        return AffineExpression(self.a - other.a, self.b - other.b)
 
     @staticmethod
     def parse_arithmetic_term(expr: FNode, x: list[Fluent]) -> tuple[int|float, int|None]:
@@ -44,32 +47,44 @@ class LinearInequality(object):
         raise ValueError(f"Cannot process arithmetic term: {expr}")
         return 0.0, None
 
-    @staticmethod
-    def parse_sum_term(expr: FNode, x: list[Fluent]) -> Self:
-        equation = LinearInequality(a=np.zeros(len(x)), b=0.0)
+    @classmethod
+    def parse_term(cls, expr: FNode, x: list[Fluent]) -> Self:
+        expression = AffineExpression(a=np.zeros(len(x)), b=0.0)
         if expr.node_type == OperatorKind.PLUS:
             for sub_term in expr.args:
-                value, var = LinearInequality.parse_arithmetic_term(sub_term, x)
+                value, var = AffineExpression.parse_arithmetic_term(sub_term, x)
                 if var is None:
-                    equation.b = value
+                    expression.b = value
                 else:
-                    equation.a[var] = value
+                    expression.a[var] = value
         else:
-            value, var = LinearInequality.parse_arithmetic_term(expr, x)
+            value, var = AffineExpression.parse_arithmetic_term(expr, x)
             if var is None:
-                equation.b = value
+                expression.b = value
             else:
-                equation.a[var] = value
-        return equation
+                expression.a[var] = value
+        return expression
 
+@dataclass
+class LinearInequality(object):
+    """
+    An equation of the form \sum_{i=1}^n a_i x_i + b <= 0
+    """
+    xi: AffineExpression
 
     @staticmethod
     def parse_leq(expr: FNode, x: list[Fluent]) -> Self:
         lhs, rhs = expr.args
-        lhs = LinearInequality.parse_sum_term(lhs, x)
-        rhs = LinearInequality.parse_sum_term(rhs, x)
-        return lhs - rhs
+        xi_l = AffineExpression.parse_term(lhs, x)
+        xi_r = AffineExpression.parse_term(rhs, x)
+        return xi_l - xi_r
 
+
+@dataclass
+class AffineEffect(object):
+    x_plus: int
+    a: np.ndarray
+    b: float
 
 
 def process_cmd_line() -> Namespace:
@@ -92,7 +107,6 @@ def process_cmd_line() -> Namespace:
 def search_for_linear_inequalities(expr: FNode, x: list[Fluent]) -> list[LinearInequality]:
 
     inequalities: list[LinearInequality] = []
-    print(expr.node_type)
 
     match expr.node_type:
         case OperatorKind.AND:
@@ -135,7 +149,18 @@ def main() -> None:
         for goal_condition in ground_problem.goals:
             equations: list[LinearInequality] = search_for_linear_inequalities(goal_condition, state_variables)
 
-        print(equations)
+        print("goal", equations)
+
+        preconditions: list[list[LinearInequality]] = []
+        effects: list[list[AffineEffect]] = []
+        for action in ground_problem.actions:
+            action_equations: list[LinearInequality] = []
+            for cond in action.preconditions:
+                action_equations += [search_for_linear_inequalities(cond, state_variables)]
+            print(action.name, action_equations)
+            for eff in action.effects:
+                pass
+
 
 if __name__ == '__main__':
     main()
