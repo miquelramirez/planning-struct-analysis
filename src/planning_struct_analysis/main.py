@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from unified_planning.io import PDDLReader
 from unified_planning.engines import CompilationKind
-from unified_planning.model import Fluent, FNode, OperatorKind
+from unified_planning.model import Fluent, FNode, OperatorKind, Effect, EffectKind
 from unified_planning.shortcuts import Compiler
 
 from typing import Self
@@ -24,8 +24,14 @@ class AffineExpression(object):
     def __sub__(self, other: Self) -> Self:
         return AffineExpression(self.a - other.a, self.b - other.b)
 
-    @staticmethod
-    def parse_arithmetic_term(expr: FNode, x: list[Fluent]) -> tuple[int|float, int|None]:
+    @classmethod
+    def from_var(cls, y, x: list[Fluent]) -> Self:
+        a = np.zeros(len(x))
+        a[y] = 1.0
+        return AffineExpression(a=a, b=0.0)
+
+    @classmethod
+    def parse_arithmetic_term(cls, expr: FNode, x: list[Fluent]) -> tuple[int|float, int|None]:
         match expr.node_type:
             case OperatorKind.INT_CONSTANT:
                 return expr.int_constant_value(), None
@@ -57,6 +63,13 @@ class AffineExpression(object):
                     expression.b = value
                 else:
                     expression.a[var] = value
+        elif expr.node_type == OperatorKind.MINUS:
+            for sub_term in expr.args:
+                value, var = AffineExpression.parse_arithmetic_term(sub_term, x)
+                if var is None:
+                    expression.b = value
+                else:
+                    expression.a[var] = -value
         else:
             value, var = AffineExpression.parse_arithmetic_term(expr, x)
             if var is None:
@@ -72,19 +85,34 @@ class LinearInequality(object):
     """
     xi: AffineExpression
 
-    @staticmethod
-    def parse_leq(expr: FNode, x: list[Fluent]) -> Self:
+    @classmethod
+    def parse_leq(cls, expr: FNode, x: list[Fluent]) -> Self:
         lhs, rhs = expr.args
         xi_l = AffineExpression.parse_term(lhs, x)
         xi_r = AffineExpression.parse_term(rhs, x)
-        return xi_l - xi_r
+        return LinearInequality(xi=xi_l - xi_r)
 
 
 @dataclass
 class AffineEffect(object):
     x_plus: int
-    a: np.ndarray
-    b: float
+    xi: AffineExpression
+
+    @classmethod
+    def parse(cls, eff: Effect, x: list[Fluent]) -> Self | None:
+        aff_x = x.index(eff.fluent)
+        eff_expr = eff.value
+        match eff.kind:
+            case EffectKind.INCREASE:
+                eff_rhs = AffineExpression.from_var(aff_x, x) + AffineExpression.parse_term(eff_expr, x)
+                return AffineEffect(x_plus=aff_x, xi=eff_rhs)
+            case EffectKind.DECREASE:
+                eff_rhs = AffineExpression.from_var(aff_x, x) - AffineExpression.parse_term(eff_expr, x)
+                return AffineEffect(x_plus=aff_x, xi=eff_rhs)
+            case EffectKind.ASSIGN:
+                eff_rhs = AffineExpression.parse_term(eff_expr, x)
+                return AffineEffect(x_plus=aff_x, xi=eff_rhs)
+        return None
 
 
 def process_cmd_line() -> Namespace:
@@ -158,8 +186,13 @@ def main() -> None:
             for cond in action.preconditions:
                 action_equations += [search_for_linear_inequalities(cond, state_variables)]
             print(action.name, action_equations)
+            preconditions += [action_equations]
+            eff_list: list[AffineEffect] = []
             for eff in action.effects:
-                pass
+                e = AffineEffect.parse(eff, state_variables)
+                eff_list += [e]
+            effects += [eff_list]
+            print(eff_list)
 
 
 if __name__ == '__main__':
