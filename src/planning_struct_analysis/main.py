@@ -31,6 +31,11 @@ class AffineExpression(object):
         return AffineExpression(a=a, b=0.0)
 
     @classmethod
+    def from_constant(cls, c, x: list[Fluent]) -> Self:
+        a = np.zeros(len(x))
+        return AffineExpression(a=a, b=c)
+
+    @classmethod
     def parse_arithmetic_term(cls, expr: FNode, x: list[Fluent]) -> tuple[int|float, int|None]:
         match expr.node_type:
             case OperatorKind.INT_CONSTANT:
@@ -50,6 +55,8 @@ class AffineExpression(object):
             case OperatorKind.FLUENT_EXP:
                 index_of_var = x.index(expr)
                 return 1.0, index_of_var
+            case OperatorKind.BOOL_CONSTANT:
+                return 1 if expr.bool_constant_value() else 0, None
         raise ValueError(f"Cannot process arithmetic term: {expr}")
         return 0.0, None
 
@@ -90,7 +97,21 @@ class LinearInequality(object):
         lhs, rhs = expr.args
         xi_l = AffineExpression.parse_term(lhs, x)
         xi_r = AffineExpression.parse_term(rhs, x)
-        return LinearInequality(xi=xi_l - xi_r)
+        return [LinearInequality(xi=xi_l - xi_r)]
+
+    @classmethod
+    def parse_eq(cls, expr: FNode, x: list[Fluent]) -> Self:
+        lhs, rhs = expr.args
+        xi_l = AffineExpression.parse_term(lhs, x)
+        xi_r = AffineExpression.parse_term(rhs, x)
+        return [LinearInequality(xi=xi_l - xi_r), LinearInequality(xi=xi_r - xi_l)]
+
+    @classmethod
+    def parse_fluent(cls, expr: FNode, x: list[Fluent]) -> Self:
+        index_x = x.index(expr)
+        xi_l = AffineExpression.from_var(index_x, x)
+        xi_r = AffineExpression.from_constant(1, x)
+        return [LinearInequality(xi=xi_l - xi_r), LinearInequality(xi=xi_r - xi_l)]
 
 
 @dataclass
@@ -141,7 +162,11 @@ def search_for_linear_inequalities(expr: FNode, x: list[Fluent]) -> list[LinearI
             for i, sub_cond_i in enumerate(expr.args):
                 inequalities += search_for_linear_inequalities(sub_cond_i, x)
         case OperatorKind.LE:
-            inequalities += [LinearInequality.parse_leq(expr, x)]
+            inequalities += LinearInequality.parse_leq(expr, x)
+        case OperatorKind.EQUALS:
+            inequalities += LinearInequality.parse_eq(expr, x)
+        case OperatorKind.FLUENT_EXP:
+            inequalities += LinearInequality.parse_fluent(expr, x)
         case _:
             print("Cannot do anything in nodes of type", expr.node_type)
 
@@ -177,22 +202,30 @@ def main() -> None:
         for goal_condition in ground_problem.goals:
             equations: list[LinearInequality] = search_for_linear_inequalities(goal_condition, state_variables)
 
-        print("goal", equations)
+        print("goal:")
+
+        for index, eq in enumerate(equations):
+            print(f"{index}. {eq}")
 
         preconditions: list[list[LinearInequality]] = []
         effects: list[list[AffineEffect]] = []
         for action in ground_problem.actions:
             action_equations: list[LinearInequality] = []
             for cond in action.preconditions:
-                action_equations += [search_for_linear_inequalities(cond, state_variables)]
-            print(action.name, action_equations)
+                action_equations += search_for_linear_inequalities(cond, state_variables)
+            print(action.name)
+            print("precondition:")
+            for index, eq in enumerate(action_equations):
+                print(f"{index}. {eq}")
             preconditions += [action_equations]
             eff_list: list[AffineEffect] = []
             for eff in action.effects:
                 e = AffineEffect.parse(eff, state_variables)
                 eff_list += [e]
             effects += [eff_list]
-            print(eff_list)
+            print("effects:")
+            for index, eff_expr in enumerate(effects[-1]):
+                print(f"{index}. {state_variables[eff_expr.x_plus]}+ := {eff_expr.xi}")
 
 
 if __name__ == '__main__':
